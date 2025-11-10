@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { fetchRecipeById } from "../api";
+import { fetchRecipeById, mockFallbackEnabled, getMockFallbackReason, isMockMode } from "../api";
 
 /**
  * RecipeDetails page shows one recipe with image, ingredients, and instructions.
@@ -12,25 +12,45 @@ export default function RecipeDetails() {
   const [recipe, setRecipe] = useState(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
-  const abortRef = useRef();
+  const abortRef = useRef(null);
 
   useEffect(() => {
-    if (abortRef.current) abortRef.current.abort();
+    // Abort any in-flight call for prior id
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch {}
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     setStatus("loading");
     setError("");
     fetchRecipeById(id, { signal: controller.signal })
       .then((data) => {
-        setRecipe(data);
-        setStatus("success");
+        if (abortRef.current === controller) {
+          setRecipe(data);
+          setStatus("success");
+        }
       })
       .catch((err) => {
-        if (err.name === "AbortError") return;
-        setError(err.message || "Failed to load recipe");
-        setStatus("error");
+        if (err?.name === "AbortError") return;
+        if (abortRef.current === controller) {
+          const msg = (err?.message || "").toLowerCase();
+          const friendly = msg.includes("aborted") || msg.includes("timeout")
+            ? "Request timed out. Please try again."
+            : err?.message || "Failed to load recipe";
+          setError(friendly);
+          setStatus("error");
+        }
       });
+    return () => {
+      if (abortRef.current) {
+        try { abortRef.current.abort(); } catch {}
+      }
+    };
   }, [id]);
+
+  const showStaticMock = isMockMode();
+  const showDynamicMock = mockFallbackEnabled() && !showStaticMock;
+  const mockReason = getMockFallbackReason();
 
   if (status === "loading") return <div className="state">Loading recipe…</div>;
   if (status === "error")
@@ -52,6 +72,13 @@ export default function RecipeDetails() {
 
   return (
     <article className="details">
+      {(showStaticMock || showDynamicMock) && (
+        <div className="state" role="note" aria-live="polite" style={{ margin: 12 }}>
+          {showStaticMock
+            ? "Running in mock mode (no backend configured)."
+            : `Mock mode enabled due to network error: ${mockReason}`}
+        </div>
+      )}
       <img
         src={recipe.image}
         alt={`Photo of ${recipe.title}`}

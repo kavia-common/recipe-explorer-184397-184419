@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import RecipeCard from "./RecipeCard";
-import { fetchRecipes, isMockMode } from "../api";
+import { fetchRecipes, isMockMode, mockFallbackEnabled, getMockFallbackReason } from "../api";
 import SearchBar from "./SearchBar";
 
 /**
@@ -12,40 +12,64 @@ export default function RecipeGrid() {
   const [recipes, setRecipes] = useState([]);
   const [status, setStatus] = useState("idle"); // idle | loading | error | success
   const [error, setError] = useState("");
-  const abortRef = useRef();
+  const abortRef = useRef(null);
 
   const load = (q) => {
-    if (abortRef.current) abortRef.current.abort();
+    // Abort any in-flight request before starting a new one
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch {}
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     setStatus("loading");
     setError("");
+
     fetchRecipes({ q, signal: controller.signal })
       .then((data) => {
-        setRecipes(Array.isArray(data) ? data : []);
-        setStatus("success");
+        // Only update if this response is from the latest request
+        if (abortRef.current === controller) {
+          setRecipes(Array.isArray(data) ? data : []);
+          setStatus("success");
+        }
       })
       .catch((err) => {
-        if (err.name === "AbortError") return;
-        setError(err.message || "Failed to load recipes");
-        setStatus("error");
+        if (err?.name === "AbortError") return; // stale request
+        if (abortRef.current === controller) {
+          // Classify abort/timeout vs others
+          const msg = (err?.message || "").toLowerCase();
+          const friendly = msg.includes("aborted") || msg.includes("timeout")
+            ? "Request timed out. Please try again."
+            : err?.message || "Failed to load recipes";
+          setError(friendly);
+          setStatus("error");
+        }
       });
   };
 
   useEffect(() => {
     load("");
+    return () => {
+      // abort on unmount
+      if (abortRef.current) {
+        try { abortRef.current.abort(); } catch {}
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const showMockInfo = isMockMode();
+  const showStaticMock = isMockMode();
+  const showDynamicMock = mockFallbackEnabled() && !showStaticMock;
+  const mockReason = getMockFallbackReason();
 
   return (
     <div>
       <SearchBar onSearch={(q) => load(q)} />
       <div className="spacer" />
-      {showMockInfo && status !== "error" && (
+      {(showStaticMock || showDynamicMock) && status !== "error" && (
         <div className="state" role="note" aria-live="polite">
-          Running in mock mode (no backend configured). Set REACT_APP_API_BASE or REACT_APP_BACKEND_URL to connect to a server.
+          {showStaticMock
+            ? "Running in mock mode (no backend configured). Set REACT_APP_API_BASE or REACT_APP_BACKEND_URL to connect to a server."
+            : `Mock mode enabled due to network error: ${mockReason}`}
         </div>
       )}
       {status === "loading" && <div className="state">Loading recipes…</div>}
