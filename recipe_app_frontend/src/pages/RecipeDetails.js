@@ -36,7 +36,12 @@ export default function RecipeDetails() {
   if (status === "error")
     return (
       <div className="state error" role="alert">
-        Error: {error}
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Failed to load recipe</div>
+        <div style={{ whiteSpace: "pre-wrap" }}>{error}</div>
+        <div className="spacer" />
+        <div className="helper">
+          If you configured a backend, ensure CORS allows this origin and the API base is correct.
+        </div>
         <div className="spacer" />
         <Link to="/" className="card-cta" aria-label="Back to home">
           ← Back to recipes
